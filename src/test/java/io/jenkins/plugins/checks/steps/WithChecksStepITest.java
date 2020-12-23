@@ -122,6 +122,48 @@ public class WithChecksStepITest extends IntegrationTestWithJenkinsPerTest {
     }
 
     /**
+     * Test that withChecks correctly reports unstables.
+     */
+    @Test
+    public void withChecksShouldDetectUnstable() {
+        WorkflowJob job = createPipeline();
+        job.setDefinition(asStage("withChecks('test injection') { echo 'hello'; dir('somewhere') { echo 'before' ; unstable 'oh no!'; echo 'after' } ; echo 'goodbye' }"));
+
+        buildWithResult(job, Result.UNSTABLE);
+
+        assertThat(PUBLISHER_FACTORY.getPublishedChecks().size()).isEqualTo(2);
+        ChecksDetails failure = PUBLISHER_FACTORY.getPublishedChecks().get(1);
+
+        assertThat(failure.getStatus()).isEqualTo(ChecksStatus.COMPLETED);
+        assertThat(failure.getConclusion()).isEqualTo(ChecksConclusion.FAILURE);
+        assertThat(failure.getOutput()).isPresent();
+
+        assertThat(failure.getOutput().get().getText()).isPresent();
+        assertThat(failure.getOutput().get().getText().get()).contains("oh no!");
+    }
+
+    /**
+     * Test that withChecks doesn't pick up spurious unstables.
+     */
+    @Test
+    public void withChecksShouldNotDetectUnrelatedUnstables() {
+        WorkflowJob job = createPipeline();
+        job.setDefinition(asStage("unstable 'early oh no'; withChecks('test injection') { publishChecks() }"));
+
+        buildWithResult(job, Result.UNSTABLE);
+
+        assertThat(PUBLISHER_FACTORY.getPublishedChecks().size()).isEqualTo(2);
+        ChecksDetails success = PUBLISHER_FACTORY.getPublishedChecks().get(1);
+
+        assertThat(success.getStatus()).isEqualTo(ChecksStatus.COMPLETED);
+        assertThat(success.getConclusion()).isEqualTo(ChecksConclusion.SUCCESS);
+        assertThat(success.getOutput()).isPresent();
+
+        assertThat(success.getOutput().get().getText()).isPresent();
+        assertThat(success.getOutput().get().getText().get()).isEqualTo("");
+    }
+
+    /**
      * Test that withChecks correctly reports aborts.
      */
     @Test

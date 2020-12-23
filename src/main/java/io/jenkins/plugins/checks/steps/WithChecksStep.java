@@ -3,12 +3,16 @@ package io.jenkins.plugins.checks.steps;
 import edu.hm.hafner.util.VisibleForTesting;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.Extension;
+import hudson.model.Result;
 import hudson.model.Run;
 import hudson.model.TaskListener;
 import io.jenkins.plugins.checks.api.*;
 import io.jenkins.plugins.util.PluginLogger;
 import jenkins.model.CauseOfInterruption;
 import org.jenkinsci.plugins.displayurlapi.DisplayURLProvider;
+import org.jenkinsci.plugins.workflow.actions.WarningAction;
+import org.jenkinsci.plugins.workflow.cps.nodes.StepEndNode;
+import org.jenkinsci.plugins.workflow.graph.FlowNode;
 import org.jenkinsci.plugins.workflow.steps.*;
 import org.kohsuke.stapler.DataBoundConstructor;
 
@@ -171,7 +175,45 @@ public class WithChecksStep extends Step implements Serializable {
 
             @Override
             public void onSuccess(final StepContext context, final Object result) {
+                Optional<WarningAction> warningAction;
+                try {
+                    StepEndNode endNode = context.get(StepEndNode.class);
+                    warningAction = getUnstable(endNode, endNode.getStartNode());
+                }
+                catch (IOException | InterruptedException e) {
+                    warningAction = Optional.empty();
+                }
+                warningAction.ifPresent(action ->
+                        publish(context, new ChecksDetails.ChecksDetailsBuilder()
+                                .withName(info.getName())
+                                .withStatus(ChecksStatus.COMPLETED)
+                                .withConclusion(ChecksConclusion.FAILURE)
+                                .withOutput(new ChecksOutput.ChecksOutputBuilder()
+                                        .withTitle("Unstable")
+                                        .withText(action.getMessage())
+                                        .build())));
                 context.onSuccess(result);
+            }
+
+            private Optional<WarningAction> getUnstable(final FlowNode node, final FlowNode startNode) {
+                if (node.equals(startNode)) {
+                    return Optional.empty();
+                }
+
+                Optional<WarningAction> current = node.getActions(WarningAction.class)
+                        .stream()
+                        .filter(action -> action.getResult() == Result.UNSTABLE)
+                        .findFirst();
+
+                if (current.isPresent()) {
+                    return current;
+                }
+                return node.getParents()
+                        .stream()
+                        .map(child -> getUnstable(child, startNode))
+                        .filter(Optional::isPresent)
+                        .map(Optional::get)
+                        .findFirst();
             }
 
             @Override
